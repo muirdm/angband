@@ -521,6 +521,7 @@ void place_object(struct chunk *c, struct loc grid, int level, bool good,
 	} else {
 		uint32_t sqrating;
 
+		object_mention(c, new_obj, NULL);
 		list_object(c, new_obj);
 		if (new_obj->artifact) {
 			c->good_item = true;

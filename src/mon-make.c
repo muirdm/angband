@@ -743,6 +743,17 @@ int mon_create_drop_count(const struct monster_race *race, bool maximize,
 }
 
 /**
+ * Give a newly created object to a monster, first mentioning it for the
+ * cheat_peek option (monster_carry() may merge and free the object).
+ */
+static bool mon_carry_new_object(struct chunk *c, struct monster *mon,
+		struct object *obj, const struct monster_race *race)
+{
+	object_mention(c, obj, race->name);
+	return monster_carry(c, mon, obj);
+}
+
+/**
  * Creates a specific monster's drop, including any drops specified
  * in the monster.txt file.
  *
@@ -816,7 +827,7 @@ static bool mon_create_drop(struct chunk *c, struct monster *mon,
 			obj->number = 1;
 
 			/* Try to carry */
-			if (monster_carry(c, mon, obj)) {
+			if (mon_carry_new_object(c, mon, obj, effective_race)) {
 				any = true;
 			} else {
 				mark_artifact_created(obj->artifact, false);
@@ -855,7 +866,7 @@ static bool mon_create_drop(struct chunk *c, struct monster *mon,
 			1 : randint0(drop->max - drop->min) + drop->min;
 
 		/* Try to carry */
-		if (monster_carry(c, mon, obj)) {
+		if (mon_carry_new_object(c, mon, obj, effective_race)) {
 			any = true;
 		} else {
 			object_wipe(obj);
@@ -878,7 +889,7 @@ static bool mon_create_drop(struct chunk *c, struct monster *mon,
 		obj->origin_race = effective_race;
 
 		/* Try to carry */
-		if (monster_carry(c, mon, obj)) {
+		if (mon_carry_new_object(c, mon, obj, effective_race)) {
 			any = true;
 		} else {
 			if (obj->artifact) {

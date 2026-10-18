@@ -41,5 +41,8 @@ struct object *make_object(struct chunk *c, int lev, bool good, bool great,
 void acquirement(struct loc grid, int level, int num, bool great);
 struct object_kind *money_kind(const char *name, int value);
 struct object *make_gold(int lev, const char *coin_type);
+void object_mention(const struct chunk *c, const struct object *obj,
+	const char *carrier);
+void object_mention_preserve(const struct object *obj);
 
 #endif /* OBJECT_MAKE_H */

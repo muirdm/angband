@@ -23,6 +23,7 @@
 #include "init.h"
 #include "obj-chest.h"
 #include "obj-curse.h"
+#include "obj-desc.h"
 #include "obj-gear.h"
 #include "obj-knowledge.h"
 #include "obj-make.h"
@@ -1319,6 +1320,77 @@ struct object *make_gold(int lev, const char *coin_type)
 	new_gold->pval = value;
 
 	return new_gold;
+}
+
+/**
+ * Cheat -- describe a newly created object for the cheat_peek option,
+ * whether or not the player knows anything about it yet.
+ */
+static void object_mention_name(char *buf, size_t max,
+	const struct object *obj)
+{
+	char kname[80];
+	size_t end = 0;
+
+	buf[0] = '\0';
+	object_kind_name(kname, sizeof(kname), obj->kind, true);
+	if (tval_can_have_flavor_k(obj->kind)) {
+		char bname[80];
+
+		object_base_name(bname, sizeof(bname), obj->kind->tval, false);
+		strnfcat(buf, max, &end, "%s of %s", bname, kname);
+	} else {
+		strnfcat(buf, max, &end, "%s", kname);
+	}
+	if (obj->artifact) {
+		strnfcat(buf, max, &end, " %s", obj->artifact->name);
+	} else if (obj->ego) {
+		strnfcat(buf, max, &end, " %s", obj->ego->name);
+	}
+}
+
+/**
+ * Cheat -- mention an artifact, ego item or out-of-depth object as it is
+ * placed in the dungeon.  carrier is the name of the monster carrying it,
+ * or NULL if it is on the floor.
+ */
+void object_mention(const struct chunk *c, const struct object *obj,
+	const char *carrier)
+{
+	char o_name[120];
+	const char *what;
+
+	if (!obj || !OPT(player, cheat_peek)) return;
+
+	if (obj->artifact) {
+		what = "Artifact";
+	} else if (obj->ego) {
+		what = "Ego-item";
+	} else if (!obj->curses && c && obj->kind->alloc_min > c->depth) {
+		what = "Object";
+	} else {
+		return;
+	}
+
+	object_mention_name(o_name, sizeof(o_name), obj);
+	if (carrier) {
+		msg("%s (%s), carried by %s", what, o_name, carrier);
+	} else {
+		msg("%s (%s)", what, o_name);
+	}
+}
+
+/**
+ * Cheat -- mention an artifact that was left behind unseen and so can be
+ * generated again.
+ */
+void object_mention_preserve(const struct object *obj)
+{
+	char o_name[120];
+
+	if (!obj || !obj->artifact || !OPT(player, cheat_peek)) return;
+	object_mention_name(o_name, sizeof(o_name), obj);
+	msg("Preserving (%s)", o_name);
 }
 
 struct init_module obj_make_module = {

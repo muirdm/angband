@@ -39,6 +39,7 @@
 #include "mon-move.h"
 #include "mon-spell.h"
 #include "monster.h"
+#include "obj-make.h"
 #include "obj-tval.h"
 #include "obj-util.h"
 #include "object.h"
@@ -1382,6 +1383,7 @@ void prepare_next_level(struct player *p)
 									mark_artifact_created(obj->artifact, true);
 								} else {
 									mark_artifact_created(obj->artifact, false);
+									object_mention_preserve(obj);
 								}
 							}
 
