@@ -456,6 +456,17 @@ static int is_object_good(const struct object *obj)
 
 
 /**
+ * With the "Peek into object creation" cheat on, the ignore code may look at
+ * the real object instead of what the player has learned about it.  That lets
+ * quality and ego ignoring hide floor items before they are walked over.
+ */
+static bool ignore_peek(const struct object *obj)
+{
+	return player && OPT(player, cheat_peek) && obj->known;
+}
+
+
+/**
  * Determine the ignore level of an object
  *
  * The main point is when the value is undetermined given current info,
@@ -466,28 +477,33 @@ uint8_t ignore_level_of(const struct object *obj)
 	uint8_t value = 0;
 	int i;
 
+	const struct object *info;
+	bool peek;
+
 	if (!obj->known) return IGNORE_MAX;
+
+	/* Cheating lets us judge by the real object */
+	peek = ignore_peek(obj);
+	info = peek ? obj : obj->known;
 
 	/* Deal with jewelry specially - only bad or average */
 	if (tval_is_jewelry(obj)) {
 		/* One positive modifier means not bad*/
 		for (i = 0; i < OBJ_MOD_MAX; i++)
-			if (obj->known->modifiers[i] > 0)
+			if (info->modifiers[i] > 0)
 				return IGNORE_AVERAGE;
 
 		/* One positive combat value means not bad, one negative means bad */
-		if ((obj->known->to_h > 0) || (obj->known->to_d > 0) ||
-			(obj->known->to_a > 0))
+		if ((info->to_h > 0) || (info->to_d > 0) || (info->to_a > 0))
 			return IGNORE_AVERAGE;
-		if ((obj->known->to_h < 0) || (obj->known->to_d < 0) ||
-			(obj->known->to_a < 0))
+		if ((info->to_h < 0) || (info->to_d < 0) || (info->to_a < 0))
 			return IGNORE_BAD;
 
 		return IGNORE_AVERAGE;
 	}
 
 	/* Now just do bad, average, good, ego */
-	if (object_fully_known(obj)) {
+	if (peek || object_fully_known(obj)) {
 		int isgood = is_object_good(obj);
 
 		/* Values for items not egos or artifacts, may be updated */
@@ -600,13 +616,14 @@ bool object_is_ignored(const struct object *obj)
 	if (type == ITYPE_MAX)
 		return false;
 
-	/* Ignore ego items if known */
-	if (obj->known->ego && ego_is_ignored(obj->ego->eidx, type))
+	/* Ignore ego items if known (or peeked at) */
+	if ((obj->known->ego || ignore_peek(obj)) && obj->ego &&
+		ego_is_ignored(obj->ego->eidx, type))
 		return true;
 
-	/* Ignore items known not to be artifacts */
-	if ((obj->known->notice & OBJ_NOTICE_ASSESSED) && !obj->artifact &&
-		ignore_level[type] == IGNORE_ALL)
+	/* Ignore items known (or peeked at) not to be artifacts */
+	if (((obj->known->notice & OBJ_NOTICE_ASSESSED) || ignore_peek(obj)) &&
+		!obj->artifact && ignore_level[type] == IGNORE_ALL)
 		return true;
 
 	/* Get result based on the feeling and the ignore_level */

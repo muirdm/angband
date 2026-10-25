@@ -14,6 +14,10 @@
 #include "generate.h"
 #include "init.h"
 #include "mon-make.h"
+#include "obj-ignore.h"
+#include "obj-knowledge.h"
+#include "obj-make.h"
+#include "obj-util.h"
 #include "obj-pile.h"
 #include "option.h"
 #include "player.h"
@@ -119,9 +123,79 @@ static int test_peek_on(void *state)
 	ok;
 }
 
+
+/* Make a plain floor long sword the player has seen but not walked over */
+static struct object *seen_sword(void)
+{
+	struct object_kind *kind = lookup_kind(TV_SWORD,
+		lookup_sval(TV_SWORD, "Long Sword"));
+	struct object *obj = object_new();
+
+	object_prep(obj, kind, 0, MINIMISE);
+	/* Magical, so its bonuses aren't known until walked over */
+	obj->to_h = 5;
+	obj->to_d = 5;
+	obj->known = object_new();
+	object_set_base_known(player, obj);
+	return obj;
+}
+
+static void free_sword(struct object *obj)
+{
+	object_free(obj->known);
+	object_free(obj);
+}
+
+static int test_peek_ignore(void *state)
+{
+	struct object *obj = seen_sword();
+	struct ego_item *ego = NULL;
+	int i;
+
+	for (i = 0; i < z_info->e_max; i++) {
+		if (e_info[i].name && streq(e_info[i].name, "of Westernesse")) {
+			ego = &e_info[i];
+			break;
+		}
+	}
+	require(ego);
+
+	/* Hide every non-artifact sword */
+	ignore_level[ITYPE_SHARP] = IGNORE_ALL;
+	option_set("cheat_peek", false);
+	require(!object_is_ignored(obj));
+	option_set("cheat_peek", true);
+	require(object_is_ignored(obj));
+
+	/* "Good" keeps egos, so an unwalked ego sword stays visible... */
+	ignore_level[ITYPE_SHARP] = IGNORE_GOOD;
+	obj->ego = ego;
+	require(!object_is_ignored(obj));
+	/* ...unless that ego is ignored */
+	ego_ignore_toggle(ego->eidx, ITYPE_SHARP);
+	require(object_is_ignored(obj));
+	option_set("cheat_peek", false);
+	require(!object_is_ignored(obj));
+	ego_ignore_toggle(ego->eidx, ITYPE_SHARP);
+
+	/* Artifacts are never hidden by quality */
+	option_set("cheat_peek", true);
+	ignore_level[ITYPE_SHARP] = IGNORE_ALL;
+	obj->ego = NULL;
+	obj->artifact = &a_info[1];
+	require(!object_is_ignored(obj));
+	obj->artifact = NULL;
+
+	ignore_level[ITYPE_SHARP] = IGNORE_NONE;
+	option_set("cheat_peek", false);
+	free_sword(obj);
+	ok;
+}
+
 const char *suite_name = "game/peek";
 struct test tests[] = {
 	{ "peek off", test_peek_off },
 	{ "peek on", test_peek_on },
+	{ "peek ignore", test_peek_ignore },
 	{ NULL, NULL }
 };
