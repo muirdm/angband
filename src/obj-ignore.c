@@ -467,24 +467,16 @@ static bool ignore_peek(const struct object *obj)
 
 
 /**
- * Determine the ignore level of an object
- *
- * The main point is when the value is undetermined given current info,
- * return the maximum possible value.
+ * Determine the ignore level of an object from the given information about
+ * it: info is either the object itself (its true properties) or the
+ * player's knowledge of it, and full says whether that information is
+ * complete.
  */
-uint8_t ignore_level_of(const struct object *obj)
+static uint8_t ignore_level_from(const struct object *obj,
+	const struct object *info, bool full)
 {
 	uint8_t value = 0;
 	int i;
-
-	const struct object *info;
-	bool peek;
-
-	if (!obj->known) return IGNORE_MAX;
-
-	/* Cheating lets us judge by the real object */
-	peek = ignore_peek(obj);
-	info = peek ? obj : obj->known;
 
 	/* Deal with jewelry specially - only bad or average */
 	if (tval_is_jewelry(obj)) {
@@ -503,7 +495,7 @@ uint8_t ignore_level_of(const struct object *obj)
 	}
 
 	/* Now just do bad, average, good, ego */
-	if (peek || object_fully_known(obj)) {
+	if (full) {
 		int isgood = is_object_good(obj);
 
 		/* Values for items not egos or artifacts, may be updated */
@@ -527,6 +519,51 @@ uint8_t ignore_level_of(const struct object *obj)
 	}
 
 	return value;
+}
+
+/**
+ * Determine the ignore level of an object
+ *
+ * The main point is when the value is undetermined given current info,
+ * return the maximum possible value.
+ */
+uint8_t ignore_level_of(const struct object *obj)
+{
+	if (!obj->known) return IGNORE_MAX;
+
+	/* Cheating lets us judge by the real object */
+	if (ignore_peek(obj))
+		return ignore_level_from(obj, obj, true);
+
+	return ignore_level_from(obj, obj->known, object_fully_known(obj));
+}
+
+/**
+ * Cheat -- would the current ignore settings hide this object once the
+ * player saw it?  Judged by the real object, so it works on objects the
+ * player knows nothing about yet, such as ones just created.
+ */
+bool object_ignore_peek(const struct object *obj)
+{
+	uint8_t type;
+
+	/* Artifacts are only ever ignored individually, by the player */
+	if (obj->artifact) return false;
+
+	/* Ignoring by kind */
+	if (object_flavor_is_aware(obj) ?
+		 kind_is_ignored_aware(obj->kind) :
+		 kind_is_ignored_unaware(obj->kind))
+		return true;
+
+	type = ignore_type_of(obj);
+	if (type == ITYPE_MAX) return false;
+
+	/* Ignoring by ego */
+	if (obj->ego && ego_is_ignored(obj->ego->eidx, type)) return true;
+
+	/* Ignoring by quality */
+	return ignore_level_from(obj, obj, true) <= ignore_level[type];
 }
 
 /**

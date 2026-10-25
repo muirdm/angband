@@ -192,10 +192,38 @@ static int test_peek_ignore(void *state)
 	ok;
 }
 
+static int test_peek_respects_ignore(void *state)
+{
+	int arts, i;
+
+	/* Ignore every non-artifact object */
+	for (i = 0; i < ITYPE_MAX; i++) ignore_level[i] = IGNORE_ALL;
+	for (i = 0; i < z_info->k_max; i++) {
+		if (!k_info[i].name) continue;
+		kind_ignore_when_aware(&k_info[i]);
+		kind_ignore_when_unaware(&k_info[i]);
+	}
+
+	artifact_msgs = 0;
+	other_peek_msgs = 0;
+	option_set("cheat_peek", true);
+	arts = make_levels(40, 40);
+	require(arts > 0);
+	/* Artifacts are still announced, everything else is hidden */
+	eq(artifact_msgs, arts);
+	eq(other_peek_msgs, 0);
+
+	for (i = 0; i < ITYPE_MAX; i++) ignore_level[i] = IGNORE_NONE;
+	for (i = 0; i < z_info->k_max; i++) kind_ignore_clear(&k_info[i]);
+	option_set("cheat_peek", false);
+	ok;
+}
+
 const char *suite_name = "game/peek";
 struct test tests[] = {
 	{ "peek off", test_peek_off },
 	{ "peek on", test_peek_on },
 	{ "peek ignore", test_peek_ignore },
+	{ "peek respects ignore", test_peek_respects_ignore },
 	{ NULL, NULL }
 };

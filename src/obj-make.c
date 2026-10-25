@@ -25,6 +25,7 @@
 #include "obj-curse.h"
 #include "obj-desc.h"
 #include "obj-gear.h"
+#include "obj-ignore.h"
 #include "obj-knowledge.h"
 #include "obj-make.h"
 #include "obj-pile.h"
@@ -1361,6 +1362,9 @@ void object_mention(const struct chunk *c, const struct object *obj,
 	const char *what;
 
 	if (!obj || !OPT(player, cheat_peek)) return;
+
+	/* Say nothing about objects the ignore settings would hide */
+	if (object_ignore_peek(obj)) return;
 
 	if (obj->artifact) {
 		what = "Artifact";
