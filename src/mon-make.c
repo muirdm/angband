@@ -1127,16 +1127,16 @@ static bool place_new_monster_one(struct chunk *c, struct loc grid,
 	if (race->level > c->depth) {
 		if (rf_has(race->flags, RF_UNIQUE)) { /* OOD unique */
 			if (OPT(player, cheat_hear))
-				msg("Deep unique (%s).", race->name);
+				peek_mention("Deep unique", race->name, NULL, ".", 1);
 		} else { /* Normal monsters but OOD */
 			if (OPT(player, cheat_hear))
-				msg("Deep monster (%s).", race->name);
+				peek_mention("Deep monster", race->name, NULL, ".", 1);
 		}
 		/* Boost rating by power per 10 levels OOD */
 		add_to_monster_rating(c, (race->level - c->depth) * race->level
 			* race->level);
 	} else if (rf_has(race->flags, RF_UNIQUE) && OPT(player, cheat_hear)) {
-		msg("Unique (%s).", race->name);
+		peek_mention("Unique", race->name, NULL, ".", 1);
 	}
 
 	/* Get local monster */

@@ -33,6 +33,9 @@ static int other_peek_msgs;
 static int other_peek_items;
 /* Whether the same mention was given twice since last reset */
 static bool repeated_mention;
+/* Whether a non-artifact mention named its carrier */
+static bool carrier_named;
+static int monster_msgs;
 static char *mentions[1000];
 static int n_mentions;
 
@@ -43,6 +46,8 @@ static void reset_mentions(void)
 	for (i = 0; i < n_mentions; i++) string_free(mentions[i]);
 	n_mentions = 0;
 	repeated_mention = false;
+	carrier_named = false;
+	monster_msgs = 0;
 	artifact_msgs = 0;
 	other_peek_msgs = 0;
 	other_peek_items = 0;
@@ -54,7 +59,10 @@ static void note_mention(const char *m)
 	int i, n = 1;
 
 	if (x && isdigit((unsigned char) x[2])) n = atoi(x + 2);
-	other_peek_items += n;
+	if (prefix(m, "Ego-item (") || prefix(m, "Object (")) {
+		other_peek_items += n;
+		if (strstr(m, "carried by")) carrier_named = true;
+	}
 	for (i = 0; i < n_mentions; i++) {
 		if (streq(mentions[i], m)) repeated_mention = true;
 	}
@@ -73,6 +81,10 @@ static void event_message(game_event_type type, game_event_data *data,
 		artifact_msgs++;
 	} else if (prefix(m, "Ego-item (") || prefix(m, "Object (")) {
 		other_peek_msgs++;
+		note_mention(m);
+	} else if (prefix(m, "Deep monster (") || prefix(m, "Deep unique (")
+			|| prefix(m, "Unique (")) {
+		monster_msgs++;
 		note_mention(m);
 	}
 }
@@ -306,6 +318,7 @@ static int test_peek_filter_shows_all(void *state)
 		require(other_peek_items >= here);
 		/* Like items are given once, with their total */
 		require(!repeated_mention);
+		require(!carrier_named);
 		shown += here;
 	}
 	require(shown > 0);
@@ -321,6 +334,25 @@ static int test_peek_filter_shows_all(void *state)
 	ok;
 }
 
+static int test_hear_combines(void *state)
+{
+	int i, msgs = 0;
+
+	option_set("cheat_hear", true);
+	for (i = 0; i < 10; i++) {
+		reset_mentions();
+		dungeon_change_level(player, 30);
+		prepare_next_level(player);
+		/* Each kind of deep monster is given once, with its total */
+		require(!repeated_mention);
+		msgs += monster_msgs;
+	}
+	require(msgs > 0);
+	reset_mentions();
+	option_set("cheat_hear", false);
+	ok;
+}
+
 const char *suite_name = "game/peek";
 struct test tests[] = {
 	{ "peek off", test_peek_off },
@@ -328,5 +360,6 @@ struct test tests[] = {
 	{ "peek ignore", test_peek_ignore },
 	{ "peek respects ignore", test_peek_respects_ignore },
 	{ "peek filter shows all", test_peek_filter_shows_all },
+	{ "hear combines", test_hear_combines },
 	{ NULL, NULL }
 };

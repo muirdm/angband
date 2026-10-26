@@ -46,5 +46,7 @@ void object_mention(const struct chunk *c, const struct object *obj,
 void object_mention_preserve(const struct object *obj);
 void object_mention_batch_start(void);
 void object_mention_batch_end(void);
+void peek_mention(const char *what, const char *name, const char *carrier,
+	const char *end, int number);
 
 #endif /* OBJECT_MAKE_H */

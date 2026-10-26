@@ -1351,12 +1351,13 @@ static void object_mention_name(char *buf, size_t max,
 }
 
 /**
- * Cheat -- during level generation, mentions are collected here and then
- * given as one message per kind of object (and carrier), with the total
- * number on the level.
+ * Cheat -- during level generation, the peek mentions of objects (and of
+ * monsters, for the cheat_hear option) are collected here and then given as
+ * one message per kind of thing, with the total number on the level.
  */
 struct peek_mention {
 	const char *what;
+	const char *end;
 	char name[120];
 	char carrier[80];
 	int number;
@@ -1366,16 +1367,16 @@ static struct peek_mention *peek_list;
 static int peek_count, peek_alloc;
 static bool peek_batching;
 
-static void object_mention_msg(const char *what, const char *name,
-	const char *carrier, int number)
+static void peek_mention_msg(const struct peek_mention *m)
 {
 	char count[16] = "";
 
-	if (number > 1) strnfmt(count, sizeof(count), " x%d", number);
-	if (carrier && carrier[0]) {
-		msg("%s (%s%s), carried by %s", what, name, count, carrier);
+	if (m->number > 1) strnfmt(count, sizeof(count), " x%d", m->number);
+	if (m->carrier[0]) {
+		msg("%s (%s%s), carried by %s%s", m->what, m->name, count,
+			m->carrier, m->end);
 	} else {
-		msg("%s (%s%s)", what, name, count);
+		msg("%s (%s%s)%s", m->what, m->name, count, m->end);
 	}
 }
 
@@ -1398,8 +1399,7 @@ void object_mention_batch_end(void)
 
 	peek_batching = false;
 	for (i = 0; i < peek_count; i++) {
-		object_mention_msg(peek_list[i].what, peek_list[i].name,
-			peek_list[i].carrier, peek_list[i].number);
+		peek_mention_msg(&peek_list[i]);
 	}
 	peek_count = 0;
 	mem_free(peek_list);
@@ -1408,16 +1408,57 @@ void object_mention_batch_end(void)
 }
 
 /**
+ * Cheat -- mention number of a thing called name, as "what (name xN)end" or,
+ * if carrier is given, "what (name xN), carried by carrier end".  what and
+ * end must be string constants.  While a level is being generated, like
+ * mentions are added together and given when it is finished.
+ */
+void peek_mention(const char *what, const char *name, const char *carrier,
+	const char *end, int number)
+{
+	struct peek_mention m;
+	int i;
+
+	m.what = what;
+	m.end = end;
+	my_strcpy(m.name, name, sizeof(m.name));
+	my_strcpy(m.carrier, carrier ? carrier : "", sizeof(m.carrier));
+	m.number = number;
+
+	/* Not generating a level, so say it now */
+	if (!peek_batching) {
+		peek_mention_msg(&m);
+		return;
+	}
+
+	/* Add to a matching earlier mention */
+	for (i = 0; i < peek_count; i++) {
+		if (peek_list[i].what == what && streq(peek_list[i].name, m.name)
+				&& streq(peek_list[i].carrier, m.carrier)) {
+			peek_list[i].number += number;
+			return;
+		}
+	}
+
+	/* Otherwise make a new one */
+	if (peek_count == peek_alloc) {
+		peek_alloc = peek_alloc ? 2 * peek_alloc : 32;
+		peek_list = mem_realloc(peek_list, peek_alloc * sizeof(*peek_list));
+	}
+	peek_list[peek_count++] = m;
+}
+
+/**
  * Cheat -- mention an artifact, ego item or out-of-depth object as it is
  * placed in the dungeon.  carrier is the name of the monster carrying it,
- * or NULL if it is on the floor.
+ * or NULL if it is on the floor; only artifacts say who carries them, so
+ * that other objects are counted for the whole level.
  */
 void object_mention(const struct chunk *c, const struct object *obj,
 	const char *carrier)
 {
 	char o_name[120];
 	const char *what;
-	int i;
 
 	if (!obj || !OPT(player, cheat_peek) || tval_is_money(obj)) return;
 
@@ -1441,35 +1482,8 @@ void object_mention(const struct chunk *c, const struct object *obj,
 	}
 
 	object_mention_name(o_name, sizeof(o_name), obj);
-	if (!carrier) carrier = "";
-
-	/* Not generating a level, so say it now */
-	if (!peek_batching) {
-		object_mention_msg(what, o_name, carrier, obj->number);
-		return;
-	}
-
-	/* Add to a matching earlier mention */
-	for (i = 0; i < peek_count; i++) {
-		if (peek_list[i].what == what && streq(peek_list[i].name, o_name)
-				&& streq(peek_list[i].carrier, carrier)) {
-			peek_list[i].number += obj->number;
-			return;
-		}
-	}
-
-	/* Otherwise make a new one */
-	if (peek_count == peek_alloc) {
-		peek_alloc = peek_alloc ? 2 * peek_alloc : 32;
-		peek_list = mem_realloc(peek_list, peek_alloc * sizeof(*peek_list));
-	}
-	peek_list[peek_count].what = what;
-	my_strcpy(peek_list[peek_count].name, o_name,
-		sizeof(peek_list[peek_count].name));
-	my_strcpy(peek_list[peek_count].carrier, carrier,
-		sizeof(peek_list[peek_count].carrier));
-	peek_list[peek_count].number = obj->number;
-	peek_count++;
+	peek_mention(what, o_name, obj->artifact ? carrier : NULL, "",
+		obj->number);
 }
 
 /**
