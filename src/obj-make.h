@@ -44,5 +44,7 @@ struct object *make_gold(int lev, const char *coin_type);
 void object_mention(const struct chunk *c, const struct object *obj,
 	const char *carrier);
 void object_mention_preserve(const struct object *obj);
+void object_mention_batch_start(void);
+void object_mention_batch_end(void);
 
 #endif /* OBJECT_MAKE_H */

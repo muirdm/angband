@@ -1348,9 +1348,63 @@ static void object_mention_name(char *buf, size_t max,
 	} else if (obj->ego) {
 		strnfcat(buf, max, &end, " %s", obj->ego->name);
 	}
-	if (obj->number > 1) {
-		strnfcat(buf, max, &end, " x%d", obj->number);
+}
+
+/**
+ * Cheat -- during level generation, mentions are collected here and then
+ * given as one message per kind of object (and carrier), with the total
+ * number on the level.
+ */
+struct peek_mention {
+	const char *what;
+	char name[120];
+	char carrier[80];
+	int number;
+};
+
+static struct peek_mention *peek_list;
+static int peek_count, peek_alloc;
+static bool peek_batching;
+
+static void object_mention_msg(const char *what, const char *name,
+	const char *carrier, int number)
+{
+	char count[16] = "";
+
+	if (number > 1) strnfmt(count, sizeof(count), " x%d", number);
+	if (carrier && carrier[0]) {
+		msg("%s (%s%s), carried by %s", what, name, count, carrier);
+	} else {
+		msg("%s (%s%s)", what, name, count);
 	}
+}
+
+/**
+ * Cheat -- start collecting mentions for a level being generated, forgetting
+ * any from an earlier, abandoned attempt.
+ */
+void object_mention_batch_start(void)
+{
+	peek_count = 0;
+	peek_batching = true;
+}
+
+/**
+ * Cheat -- give the collected mentions for the level just generated.
+ */
+void object_mention_batch_end(void)
+{
+	int i;
+
+	peek_batching = false;
+	for (i = 0; i < peek_count; i++) {
+		object_mention_msg(peek_list[i].what, peek_list[i].name,
+			peek_list[i].carrier, peek_list[i].number);
+	}
+	peek_count = 0;
+	mem_free(peek_list);
+	peek_list = NULL;
+	peek_alloc = 0;
 }
 
 /**
@@ -1363,6 +1417,7 @@ void object_mention(const struct chunk *c, const struct object *obj,
 {
 	char o_name[120];
 	const char *what;
+	int i;
 
 	if (!obj || !OPT(player, cheat_peek) || tval_is_money(obj)) return;
 
@@ -1386,11 +1441,35 @@ void object_mention(const struct chunk *c, const struct object *obj,
 	}
 
 	object_mention_name(o_name, sizeof(o_name), obj);
-	if (carrier) {
-		msg("%s (%s), carried by %s", what, o_name, carrier);
-	} else {
-		msg("%s (%s)", what, o_name);
+	if (!carrier) carrier = "";
+
+	/* Not generating a level, so say it now */
+	if (!peek_batching) {
+		object_mention_msg(what, o_name, carrier, obj->number);
+		return;
 	}
+
+	/* Add to a matching earlier mention */
+	for (i = 0; i < peek_count; i++) {
+		if (peek_list[i].what == what && streq(peek_list[i].name, o_name)
+				&& streq(peek_list[i].carrier, carrier)) {
+			peek_list[i].number += obj->number;
+			return;
+		}
+	}
+
+	/* Otherwise make a new one */
+	if (peek_count == peek_alloc) {
+		peek_alloc = peek_alloc ? 2 * peek_alloc : 32;
+		peek_list = mem_realloc(peek_list, peek_alloc * sizeof(*peek_list));
+	}
+	peek_list[peek_count].what = what;
+	my_strcpy(peek_list[peek_count].name, o_name,
+		sizeof(peek_list[peek_count].name));
+	my_strcpy(peek_list[peek_count].carrier, carrier,
+		sizeof(peek_list[peek_count].carrier));
+	peek_list[peek_count].number = obj->number;
+	peek_count++;
 }
 
 /**

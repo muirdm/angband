@@ -4,6 +4,7 @@
  * artifact placed on a level, and stays silent when switched off.
  */
 
+#include <ctype.h>
 #include "unit-test.h"
 #include "unit-test-data.h"
 #include "test-utils.h"
@@ -28,6 +29,39 @@
 
 static int artifact_msgs;
 static int other_peek_msgs;
+/* Total number of items in "Ego-item" and "Object" mentions */
+static int other_peek_items;
+/* Whether the same mention was given twice since last reset */
+static bool repeated_mention;
+static char *mentions[1000];
+static int n_mentions;
+
+static void reset_mentions(void)
+{
+	int i;
+
+	for (i = 0; i < n_mentions; i++) string_free(mentions[i]);
+	n_mentions = 0;
+	repeated_mention = false;
+	artifact_msgs = 0;
+	other_peek_msgs = 0;
+	other_peek_items = 0;
+}
+
+static void note_mention(const char *m)
+{
+	const char *x = strstr(m, " x");
+	int i, n = 1;
+
+	if (x && isdigit((unsigned char) x[2])) n = atoi(x + 2);
+	other_peek_items += n;
+	for (i = 0; i < n_mentions; i++) {
+		if (streq(mentions[i], m)) repeated_mention = true;
+	}
+	if (n_mentions < (int) N_ELEMENTS(mentions)) {
+		mentions[n_mentions++] = string_make(m);
+	}
+}
 
 static void event_message(game_event_type type, game_event_data *data,
 		void *user)
@@ -39,6 +73,7 @@ static void event_message(game_event_type type, game_event_data *data,
 		artifact_msgs++;
 	} else if (prefix(m, "Ego-item (") || prefix(m, "Object (")) {
 		other_peek_msgs++;
+		note_mention(m);
 	}
 }
 
@@ -233,7 +268,7 @@ static int count_level_shown(struct chunk *c)
 				/* Mimics are monsters, not items */
 				if (obj->mimicking_m_idx) continue;
 				if (!obj->artifact && !tval_is_money(obj) &&
-						!object_ignore_peek(obj)) n++;
+						!object_ignore_peek(obj)) n += obj->number;
 			}
 		}
 	}
@@ -244,7 +279,7 @@ static int count_level_shown(struct chunk *c)
 		if (!mon || !mon->race) continue;
 		for (obj = mon->held_obj; obj; obj = obj->next) {
 			if (!obj->artifact && !tval_is_money(obj) &&
-					!object_ignore_peek(obj)) n++;
+					!object_ignore_peek(obj)) n += obj->number;
 		}
 	}
 	return n;
@@ -259,17 +294,22 @@ static int test_peek_filter_shows_all(void *state)
 	ignore_level[ITYPE_SHARP] = IGNORE_ALL;
 	require(ignore_filter_active());
 
-	artifact_msgs = 0;
-	other_peek_msgs = 0;
 	option_set("cheat_peek", true);
 	for (i = 0; i < 10; i++) {
+		int here;
+
+		reset_mentions();
 		dungeon_change_level(player, 40);
 		prepare_next_level(player);
-		shown += count_level_shown(cave);
+		here = count_level_shown(cave);
+		/* Every item still on the level was counted when it was made */
+		require(other_peek_items >= here);
+		/* Like items are given once, with their total */
+		require(!repeated_mention);
+		shown += here;
 	}
 	require(shown > 0);
-	/* Every object still on the levels was mentioned when it was made */
-	require(other_peek_msgs >= shown);
+	reset_mentions();
 
 	/* Toggling ignoring off switches the filter off */
 	player->unignoring = 1;
