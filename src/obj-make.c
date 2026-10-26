@@ -1348,6 +1348,9 @@ static void object_mention_name(char *buf, size_t max,
 	} else if (obj->ego) {
 		strnfcat(buf, max, &end, " %s", obj->ego->name);
 	}
+	if (obj->number > 1) {
+		strnfcat(buf, max, &end, " x%d", obj->number);
+	}
 }
 
 /**
@@ -1361,16 +1364,22 @@ void object_mention(const struct chunk *c, const struct object *obj,
 	char o_name[120];
 	const char *what;
 
-	if (!obj || !OPT(player, cheat_peek)) return;
+	if (!obj || !OPT(player, cheat_peek) || tval_is_money(obj)) return;
 
 	/* Say nothing about objects the ignore settings would hide */
 	if (object_ignore_peek(obj)) return;
 
+	/*
+	 * Always mention artifacts and egos.  Other objects are mentioned if
+	 * they are out of depth or, when the player has set up item filtering,
+	 * whenever they get through the filter.
+	 */
 	if (obj->artifact) {
 		what = "Artifact";
 	} else if (obj->ego) {
 		what = "Ego-item";
-	} else if (!obj->curses && c && obj->kind->alloc_min > c->depth) {
+	} else if (ignore_filter_active() ||
+			(!obj->curses && c && obj->kind->alloc_min > c->depth)) {
 		what = "Object";
 	} else {
 		return;

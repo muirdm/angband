@@ -17,6 +17,7 @@
 #include "obj-ignore.h"
 #include "obj-knowledge.h"
 #include "obj-make.h"
+#include "obj-tval.h"
 #include "obj-util.h"
 #include "obj-pile.h"
 #include "option.h"
@@ -219,11 +220,73 @@ static int test_peek_respects_ignore(void *state)
 	ok;
 }
 
+/* Count non-artifact, non-money objects the filter lets through */
+static int count_level_shown(struct chunk *c)
+{
+	int n = 0, y, x, i;
+
+	for (y = 0; y < c->height; y++) {
+		for (x = 0; x < c->width; x++) {
+			struct object *obj = square_object(c, loc(x, y));
+
+			for (; obj; obj = obj->next) {
+				/* Mimics are monsters, not items */
+				if (obj->mimicking_m_idx) continue;
+				if (!obj->artifact && !tval_is_money(obj) &&
+						!object_ignore_peek(obj)) n++;
+			}
+		}
+	}
+	for (i = 1; i < cave_monster_max(c); i++) {
+		struct monster *mon = cave_monster(c, i);
+		struct object *obj;
+
+		if (!mon || !mon->race) continue;
+		for (obj = mon->held_obj; obj; obj = obj->next) {
+			if (!obj->artifact && !tval_is_money(obj) &&
+					!object_ignore_peek(obj)) n++;
+		}
+	}
+	return n;
+}
+
+static int test_peek_filter_shows_all(void *state)
+{
+	int shown = 0, i;
+
+	/* Any filter setting switches on mentioning everything it lets by */
+	require(!ignore_filter_active());
+	ignore_level[ITYPE_SHARP] = IGNORE_ALL;
+	require(ignore_filter_active());
+
+	artifact_msgs = 0;
+	other_peek_msgs = 0;
+	option_set("cheat_peek", true);
+	for (i = 0; i < 10; i++) {
+		dungeon_change_level(player, 40);
+		prepare_next_level(player);
+		shown += count_level_shown(cave);
+	}
+	require(shown > 0);
+	/* Every object still on the levels was mentioned when it was made */
+	require(other_peek_msgs >= shown);
+
+	/* Toggling ignoring off switches the filter off */
+	player->unignoring = 1;
+	require(!ignore_filter_active());
+	player->unignoring = 0;
+
+	ignore_level[ITYPE_SHARP] = IGNORE_NONE;
+	option_set("cheat_peek", false);
+	ok;
+}
+
 const char *suite_name = "game/peek";
 struct test tests[] = {
 	{ "peek off", test_peek_off },
 	{ "peek on", test_peek_on },
 	{ "peek ignore", test_peek_ignore },
 	{ "peek respects ignore", test_peek_respects_ignore },
+	{ "peek filter shows all", test_peek_filter_shows_all },
 	{ NULL, NULL }
 };
