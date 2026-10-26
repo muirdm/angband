@@ -1449,10 +1449,30 @@ void peek_mention(const char *what, const char *name, const char *carrier,
 }
 
 /**
- * Cheat -- mention an artifact, ego item or out-of-depth object as it is
- * placed in the dungeon.  carrier is the name of the monster carrying it,
- * or NULL if it is on the floor; only artifacts say who carries them, so
- * that other objects are counted for the whole level.
+ * Cheat -- is this an object worth mentioning for the cheat_peek option?
+ * For now that is a hard-coded list: artifacts, potions of Healing,
+ * *Healing* and Life, and Power Dragon Scale Mail.
+ */
+static bool object_peek_wanted(const struct object *obj)
+{
+	if (obj->artifact) return true;
+	if (obj->tval == TV_POTION) {
+		return obj->sval == lookup_sval(TV_POTION, "Healing")
+			|| obj->sval == lookup_sval(TV_POTION, "*Healing*")
+			|| obj->sval == lookup_sval(TV_POTION, "Life");
+	}
+	if (obj->tval == TV_DRAG_ARMOR) {
+		return obj->sval == lookup_sval(TV_DRAG_ARMOR,
+			"Power Dragon Scale Mail");
+	}
+	return false;
+}
+
+/**
+ * Cheat -- mention an object worth knowing about as it is placed in the
+ * dungeon.  carrier is the name of the monster carrying it, or NULL if it
+ * is on the floor; only artifacts say who carries them, so that other
+ * objects are counted for the whole level.
  */
 void object_mention(const struct chunk *c, const struct object *obj,
 	const char *carrier)
@@ -1460,25 +1480,15 @@ void object_mention(const struct chunk *c, const struct object *obj,
 	char o_name[120];
 	const char *what;
 
-	if (!obj || !OPT(player, cheat_peek) || tval_is_money(obj)) return;
+	if (!obj || !OPT(player, cheat_peek)) return;
+	if (!object_peek_wanted(obj)) return;
 
-	/* Say nothing about objects the ignore settings would hide */
-	if (object_ignore_peek(obj)) return;
-
-	/*
-	 * Always mention artifacts and egos.  Other objects are mentioned if
-	 * they are out of depth or, when the player has set up item filtering,
-	 * whenever they get through the filter.
-	 */
 	if (obj->artifact) {
 		what = "Artifact";
 	} else if (obj->ego) {
 		what = "Ego-item";
-	} else if (ignore_filter_active() ||
-			(!obj->curses && c && obj->kind->alloc_min > c->depth)) {
-		what = "Object";
 	} else {
-		return;
+		what = "Object";
 	}
 
 	object_mention_name(o_name, sizeof(o_name), obj);

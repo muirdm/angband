@@ -1,7 +1,11 @@
 /* game/peek.c
  *
- * Check that the "Peek into object creation" cheat option reports every
- * artifact placed on a level, and stays silent when switched off.
+ * Check the "Peek into object creation" (cheat_peek) and "Peek into monster
+ * creation" (cheat_hear) cheat options: every artifact placed on a level is
+ * reported, other reports are limited to potions of Healing, *Healing* and
+ * Life, Power Dragon Scale Mail and unique monsters, and like reports are
+ * combined into one per level.  Also check that with cheat_peek on, ignore
+ * settings hide floor items before they are walked over.
  */
 
 #include <ctype.h>
@@ -18,9 +22,9 @@
 #include "obj-ignore.h"
 #include "obj-knowledge.h"
 #include "obj-make.h"
+#include "obj-pile.h"
 #include "obj-tval.h"
 #include "obj-util.h"
-#include "obj-pile.h"
 #include "option.h"
 #include "player.h"
 #include "player-birth.h"
@@ -28,16 +32,20 @@
 #include "z-util.h"
 
 static int artifact_msgs;
-static int other_peek_msgs;
-/* Total number of items in "Ego-item" and "Object" mentions */
-static int other_peek_items;
-/* Whether the same mention was given twice since last reset */
+static int object_msgs;
+static int object_items;
+static int unique_msgs;
+/* A report of something not on the list */
+static bool unwanted_mention;
+/* The same report given twice for one level */
 static bool repeated_mention;
-/* Whether a non-artifact mention named its carrier */
-static bool carrier_named;
-static int monster_msgs;
 static char *mentions[1000];
 static int n_mentions;
+
+static const char *wanted_objects[] = {
+	"Potion of Healing", "Potion of *Healing*", "Potion of Life",
+	"Power Dragon Scale Mail"
+};
 
 static void reset_mentions(void)
 {
@@ -45,24 +53,18 @@ static void reset_mentions(void)
 
 	for (i = 0; i < n_mentions; i++) string_free(mentions[i]);
 	n_mentions = 0;
-	repeated_mention = false;
-	carrier_named = false;
-	monster_msgs = 0;
 	artifact_msgs = 0;
-	other_peek_msgs = 0;
-	other_peek_items = 0;
+	object_msgs = 0;
+	object_items = 0;
+	unique_msgs = 0;
+	unwanted_mention = false;
+	repeated_mention = false;
 }
 
-static void note_mention(const char *m)
+static void note_repeat(const char *m)
 {
-	const char *x = strstr(m, " x");
-	int i, n = 1;
+	int i;
 
-	if (x && isdigit((unsigned char) x[2])) n = atoi(x + 2);
-	if (prefix(m, "Ego-item (") || prefix(m, "Object (")) {
-		other_peek_items += n;
-		if (strstr(m, "carried by")) carrier_named = true;
-	}
 	for (i = 0; i < n_mentions; i++) {
 		if (streq(mentions[i], m)) repeated_mention = true;
 	}
@@ -80,12 +82,28 @@ static void event_message(game_event_type type, game_event_data *data,
 	if (prefix(m, "Artifact (")) {
 		artifact_msgs++;
 	} else if (prefix(m, "Ego-item (") || prefix(m, "Object (")) {
-		other_peek_msgs++;
-		note_mention(m);
-	} else if (prefix(m, "Deep monster (") || prefix(m, "Deep unique (")
-			|| prefix(m, "Unique (")) {
-		monster_msgs++;
-		note_mention(m);
+		const char *name = strchr(m, '(') + 1;
+		const char *x = strstr(m, " x");
+		bool wanted = false;
+		size_t i;
+
+		for (i = 0; i < N_ELEMENTS(wanted_objects); i++) {
+			const char *w = wanted_objects[i];
+
+			/* The name, then the end or a count */
+			if (prefix(name, w) && (name[strlen(w)] == ')'
+					|| name[strlen(w)] == ' ')) wanted = true;
+		}
+		if (!wanted || strstr(m, "carried by")) unwanted_mention = true;
+		object_msgs++;
+		object_items += (x && isdigit((unsigned char) x[2])) ?
+			atoi(x + 2) : 1;
+		note_repeat(m);
+	} else if (prefix(m, "Unique (") || prefix(m, "Deep unique (")) {
+		unique_msgs++;
+		note_repeat(m);
+	} else if (prefix(m, "Deep monster (")) {
+		unwanted_mention = true;
 	}
 }
 
@@ -100,22 +118,38 @@ int setup_tests(void **state)
 
 int teardown_tests(void *state)
 {
+	reset_mentions();
 	wipe_mon_list(cave, player);
 	cleanup_angband();
 	return 0;
 }
 
-/* Count artifacts lying on the floor or carried by monsters */
-static int count_level_artifacts(struct chunk *c)
+static bool object_is_wanted(const struct object *obj)
 {
-	int n = 0, y, x, i;
+	if (obj->artifact) return false;
+	if (obj->tval == TV_POTION) {
+		return obj->sval == lookup_sval(TV_POTION, "Healing")
+			|| obj->sval == lookup_sval(TV_POTION, "*Healing*")
+			|| obj->sval == lookup_sval(TV_POTION, "Life");
+	}
+	return obj->tval == TV_DRAG_ARMOR && obj->sval ==
+		lookup_sval(TV_DRAG_ARMOR, "Power Dragon Scale Mail");
+}
+
+/* Count artifacts, and wanted non-artifact items, on a level */
+static void count_level(struct chunk *c, int *arts, int *wanted)
+{
+	int y, x, i;
 
 	for (y = 0; y < c->height; y++) {
 		for (x = 0; x < c->width; x++) {
 			struct object *obj = square_object(c, loc(x, y));
 
 			for (; obj; obj = obj->next) {
-				if (obj->artifact) n++;
+				/* Mimics are monsters, not items */
+				if (obj->mimicking_m_idx) continue;
+				if (obj->artifact) (*arts)++;
+				else if (object_is_wanted(obj)) *wanted += obj->number;
 			}
 		}
 	}
@@ -125,52 +159,77 @@ static int count_level_artifacts(struct chunk *c)
 
 		if (!mon || !mon->race) continue;
 		for (obj = mon->held_obj; obj; obj = obj->next) {
-			if (obj->artifact) n++;
+			if (obj->artifact) (*arts)++;
+			else if (object_is_wanted(obj)) *wanted += obj->number;
 		}
 	}
-	return n;
 }
 
-static int make_levels(int count, int depth)
+static void make_level(int depth)
 {
-	int total = 0, i;
-
-	for (i = 0; i < count; i++) {
-		dungeon_change_level(player, depth);
-		prepare_next_level(player);
-		total += count_level_artifacts(cave);
-	}
-	return total;
+	reset_mentions();
+	dungeon_change_level(player, depth);
+	prepare_next_level(player);
 }
 
 static int test_peek_off(void *state)
 {
-	artifact_msgs = 0;
-	other_peek_msgs = 0;
+	int i;
+
 	option_set("cheat_peek", false);
-	(void) make_levels(10, 40);
-	eq(artifact_msgs, 0);
-	eq(other_peek_msgs, 0);
+	option_set("cheat_hear", false);
+	for (i = 0; i < 10; i++) {
+		make_level(40);
+		eq(artifact_msgs, 0);
+		eq(object_msgs, 0);
+		eq(unique_msgs, 0);
+	}
 	ok;
 }
 
 static int test_peek_on(void *state)
 {
-	int arts;
+	int i, arts_total = 0, wanted_total = 0;
 
-	artifact_msgs = 0;
-	other_peek_msgs = 0;
 	option_set("cheat_peek", true);
 	/* Turning on a cheat option marks the score */
 	require(OPT(player, score_peek));
-	arts = make_levels(40, 40);
-	require(arts > 0);
-	eq(artifact_msgs, arts);
-	/* Deep levels always have some ego items worth mentioning */
-	require(other_peek_msgs > 0);
+	for (i = 0; i < 40; i++) {
+		int arts = 0, wanted = 0;
+
+		make_level(50);
+		count_level(cave, &arts, &wanted);
+		/* Every artifact is reported */
+		eq(artifact_msgs, arts);
+		/* Wanted items are counted level-wide, nothing else is said */
+		require(object_items >= wanted);
+		require(!unwanted_mention);
+		require(!repeated_mention);
+		arts_total += arts;
+		wanted_total += wanted;
+	}
+	require(arts_total > 0);
+	require(wanted_total > 0);
+	option_set("cheat_peek", false);
 	ok;
 }
 
+static int test_hear_uniques_only(void *state)
+{
+	int i, total = 0;
+
+	option_set("cheat_hear", true);
+	for (i = 0; i < 10; i++) {
+		make_level(30);
+		/* Only uniques, each once */
+		require(!unwanted_mention);
+		require(!repeated_mention);
+		total += unique_msgs;
+	}
+	require(total > 0);
+	option_set("cheat_hear", false);
+	ok;
+}
 
 /* Make a plain floor long sword the player has seen but not walked over */
 static struct object *seen_sword(void)
@@ -240,126 +299,11 @@ static int test_peek_ignore(void *state)
 	ok;
 }
 
-static int test_peek_respects_ignore(void *state)
-{
-	int arts, i;
-
-	/* Ignore every non-artifact object */
-	for (i = 0; i < ITYPE_MAX; i++) ignore_level[i] = IGNORE_ALL;
-	for (i = 0; i < z_info->k_max; i++) {
-		if (!k_info[i].name) continue;
-		kind_ignore_when_aware(&k_info[i]);
-		kind_ignore_when_unaware(&k_info[i]);
-	}
-
-	artifact_msgs = 0;
-	other_peek_msgs = 0;
-	option_set("cheat_peek", true);
-	arts = make_levels(40, 40);
-	require(arts > 0);
-	/* Artifacts are still announced, everything else is hidden */
-	eq(artifact_msgs, arts);
-	eq(other_peek_msgs, 0);
-
-	for (i = 0; i < ITYPE_MAX; i++) ignore_level[i] = IGNORE_NONE;
-	for (i = 0; i < z_info->k_max; i++) kind_ignore_clear(&k_info[i]);
-	option_set("cheat_peek", false);
-	ok;
-}
-
-/* Count non-artifact, non-money objects the filter lets through */
-static int count_level_shown(struct chunk *c)
-{
-	int n = 0, y, x, i;
-
-	for (y = 0; y < c->height; y++) {
-		for (x = 0; x < c->width; x++) {
-			struct object *obj = square_object(c, loc(x, y));
-
-			for (; obj; obj = obj->next) {
-				/* Mimics are monsters, not items */
-				if (obj->mimicking_m_idx) continue;
-				if (!obj->artifact && !tval_is_money(obj) &&
-						!object_ignore_peek(obj)) n += obj->number;
-			}
-		}
-	}
-	for (i = 1; i < cave_monster_max(c); i++) {
-		struct monster *mon = cave_monster(c, i);
-		struct object *obj;
-
-		if (!mon || !mon->race) continue;
-		for (obj = mon->held_obj; obj; obj = obj->next) {
-			if (!obj->artifact && !tval_is_money(obj) &&
-					!object_ignore_peek(obj)) n += obj->number;
-		}
-	}
-	return n;
-}
-
-static int test_peek_filter_shows_all(void *state)
-{
-	int shown = 0, i;
-
-	/* Any filter setting switches on mentioning everything it lets by */
-	require(!ignore_filter_active());
-	ignore_level[ITYPE_SHARP] = IGNORE_ALL;
-	require(ignore_filter_active());
-
-	option_set("cheat_peek", true);
-	for (i = 0; i < 10; i++) {
-		int here;
-
-		reset_mentions();
-		dungeon_change_level(player, 40);
-		prepare_next_level(player);
-		here = count_level_shown(cave);
-		/* Every item still on the level was counted when it was made */
-		require(other_peek_items >= here);
-		/* Like items are given once, with their total */
-		require(!repeated_mention);
-		require(!carrier_named);
-		shown += here;
-	}
-	require(shown > 0);
-	reset_mentions();
-
-	/* Toggling ignoring off switches the filter off */
-	player->unignoring = 1;
-	require(!ignore_filter_active());
-	player->unignoring = 0;
-
-	ignore_level[ITYPE_SHARP] = IGNORE_NONE;
-	option_set("cheat_peek", false);
-	ok;
-}
-
-static int test_hear_combines(void *state)
-{
-	int i, msgs = 0;
-
-	option_set("cheat_hear", true);
-	for (i = 0; i < 10; i++) {
-		reset_mentions();
-		dungeon_change_level(player, 30);
-		prepare_next_level(player);
-		/* Each kind of deep monster is given once, with its total */
-		require(!repeated_mention);
-		msgs += monster_msgs;
-	}
-	require(msgs > 0);
-	reset_mentions();
-	option_set("cheat_hear", false);
-	ok;
-}
-
 const char *suite_name = "game/peek";
 struct test tests[] = {
 	{ "peek off", test_peek_off },
 	{ "peek on", test_peek_on },
 	{ "peek ignore", test_peek_ignore },
-	{ "peek respects ignore", test_peek_respects_ignore },
-	{ "peek filter shows all", test_peek_filter_shows_all },
-	{ "hear combines", test_hear_combines },
+	{ "hear uniques only", test_hear_uniques_only },
 	{ NULL, NULL }
 };

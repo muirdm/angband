@@ -539,58 +539,6 @@ uint8_t ignore_level_of(const struct object *obj)
 }
 
 /**
- * Cheat -- would the current ignore settings hide this object once the
- * player saw it?  Judged by the real object, so it works on objects the
- * player knows nothing about yet, such as ones just created.
- */
-bool object_ignore_peek(const struct object *obj)
-{
-	uint8_t type;
-
-	/* Nothing is hidden while ignoring is toggled off */
-	if (player && player->unignoring) return false;
-
-	/* Artifacts are only ever ignored individually, by the player */
-	if (obj->artifact) return false;
-
-	/* Ignoring by kind */
-	if (object_flavor_is_aware(obj) ?
-		 kind_is_ignored_aware(obj->kind) :
-		 kind_is_ignored_unaware(obj->kind))
-		return true;
-
-	type = ignore_type_of(obj);
-	if (type == ITYPE_MAX) return false;
-
-	/* Ignoring by ego */
-	if (obj->ego && ego_is_ignored(obj->ego->eidx, type)) return true;
-
-	/* Ignoring by quality */
-	return ignore_level_from(obj, obj, true) <= ignore_level[type];
-}
-
-/**
- * Is any item filtering in effect: some kind, ego or quality ignore setting,
- * with ignoring not toggled off?
- */
-bool ignore_filter_active(void)
-{
-	int i, j;
-
-	if (player && player->unignoring) return false;
-
-	for (i = ITYPE_NONE + 1; i < ITYPE_MAX; i++)
-		if (ignore_level[i] != IGNORE_NONE) return true;
-	for (i = 0; i < z_info->k_max; i++)
-		if (k_info[i].ignore) return true;
-	for (i = 0; i < z_info->e_max; i++)
-		for (j = ITYPE_NONE + 1; j < ITYPE_MAX; j++)
-			if (ego_is_ignored(i, j)) return true;
-
-	return false;
-}
-
-/**
  * Remove any ignoring of a particular flavor
  */
 void kind_ignore_clear(struct object_kind *kind)
