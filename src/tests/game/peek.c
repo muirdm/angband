@@ -19,6 +19,7 @@
 #include "generate.h"
 #include "init.h"
 #include "mon-make.h"
+#include "monster.h"
 #include "obj-ignore.h"
 #include "obj-knowledge.h"
 #include "obj-make.h"
@@ -94,7 +95,9 @@ static void event_message(game_event_type type, game_event_data *data,
 			if (prefix(name, w) && (name[strlen(w)] == ')'
 					|| name[strlen(w)] == ' ')) wanted = true;
 		}
-		if (!wanted || strstr(m, "carried by")) unwanted_mention = true;
+		/* Only non-potions say who carries them */
+		if (!wanted || (strstr(m, "carried by") && prefix(name, "Potion")))
+			unwanted_mention = true;
 		object_msgs++;
 		object_items += (x && isdigit((unsigned char) x[2])) ?
 			atoi(x + 2) : 1;
@@ -201,8 +204,8 @@ static int test_peek_on(void *state)
 		count_level(cave, &arts, &wanted);
 		/* Every artifact is reported */
 		eq(artifact_msgs, arts);
-		/* Wanted items are counted level-wide, nothing else is said */
-		require(object_items >= wanted);
+		/* Exactly the wanted items on the level are reported */
+		eq(object_items, wanted);
 		require(!unwanted_mention);
 		require(!repeated_mention);
 		arts_total += arts;
@@ -220,10 +223,20 @@ static int test_hear_uniques_only(void *state)
 
 	option_set("cheat_hear", true);
 	for (i = 0; i < 10; i++) {
+		int j, uniques = 0;
+
 		make_level(30);
 		/* Only uniques, each once */
 		require(!unwanted_mention);
 		require(!repeated_mention);
+		/* Exactly the uniques on the level are reported */
+		for (j = 1; j < cave_monster_max(cave); j++) {
+			struct monster *mon = cave_monster(cave, j);
+
+			if (mon && mon->race && rf_has(mon->race->flags, RF_UNIQUE))
+				uniques++;
+		}
+		eq(unique_msgs, uniques);
 		total += unique_msgs;
 	}
 	require(total > 0);

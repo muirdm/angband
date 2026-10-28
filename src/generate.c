@@ -1231,8 +1231,8 @@ static struct chunk *cave_generate(struct player *p, int height, int width)
 
 	if (error) quit_fmt("cave_generate() failed 100 times!");
 
-	/* Give the cheat_peek mentions for the finished level */
-	object_mention_batch_end();
+	/* Give the cheat_peek mentions for what is on the finished level */
+	object_mention_level(chunk);
 
 	/* Place dungeon squares to trigger feeling (not in town) */
 	if (p->depth) {

@@ -21,6 +21,7 @@
 #include "cave.h"
 #include "effects.h"
 #include "init.h"
+#include "monster.h"
 #include "obj-chest.h"
 #include "obj-curse.h"
 #include "obj-desc.h"
@@ -1366,6 +1367,7 @@ struct peek_mention {
 static struct peek_mention *peek_list;
 static int peek_count, peek_alloc;
 static bool peek_batching;
+static bool peek_scanning;
 
 static void peek_mention_msg(const struct peek_mention *m)
 {
@@ -1381,8 +1383,9 @@ static void peek_mention_msg(const struct peek_mention *m)
 }
 
 /**
- * Cheat -- start collecting mentions for a level being generated, forgetting
- * any from an earlier, abandoned attempt.
+ * Cheat -- start generating a level.  Until object_mention_level() is
+ * called, mentions are held back, since what is made may yet be thrown
+ * away; the finished level is then looked over instead.
  */
 void object_mention_batch_start(void)
 {
@@ -1391,13 +1394,43 @@ void object_mention_batch_start(void)
 }
 
 /**
- * Cheat -- give the collected mentions for the level just generated.
+ * Cheat -- the level has been generated: mention what is really on it,
+ * on the floor or carried by monsters, along with its uniques.
  */
-void object_mention_batch_end(void)
+void object_mention_level(struct chunk *c)
 {
-	int i;
+	int i, y, x;
 
+	peek_count = 0;
+	peek_scanning = true;
+	if (c) {
+		/* Objects on the floor (mimicked objects are really monsters) */
+		for (y = 0; y < c->height; y++) {
+			for (x = 0; x < c->width; x++) {
+				struct object *obj = square_object(c, loc(x, y));
+
+				for (; obj; obj = obj->next) {
+					if (obj->mimicking_m_idx) continue;
+					object_mention(c, obj, NULL);
+				}
+			}
+		}
+
+		/* Monsters, and what they carry */
+		for (i = 1; i < cave_monster_max(c); i++) {
+			struct monster *mon = cave_monster(c, i);
+			struct object *obj;
+
+			if (!mon || !mon->race) continue;
+			monster_mention(c, mon->race);
+			for (obj = mon->held_obj; obj; obj = obj->next) {
+				object_mention(c, obj, mon->race->name);
+			}
+		}
+	}
+	peek_scanning = false;
 	peek_batching = false;
+
 	for (i = 0; i < peek_count; i++) {
 		peek_mention_msg(&peek_list[i]);
 	}
@@ -1408,10 +1441,24 @@ void object_mention_batch_end(void)
 }
 
 /**
+ * Cheat -- mention a unique monster for the cheat_hear option.
+ */
+void monster_mention(const struct chunk *c, const struct monster_race *race)
+{
+	if (!OPT(player, cheat_hear) || !rf_has(race->flags, RF_UNIQUE)) return;
+	if (c && race->level > c->depth) {
+		peek_mention("Deep unique", race->name, NULL, ".", 1);
+	} else {
+		peek_mention("Unique", race->name, NULL, ".", 1);
+	}
+}
+
+/**
  * Cheat -- mention number of a thing called name, as "what (name xN)end" or,
  * if carrier is given, "what (name xN), carried by carrier end".  what and
- * end must be string constants.  While a level is being generated, like
- * mentions are added together and given when it is finished.
+ * end must be string constants.  While a level is being generated, only
+ * mentions from looking over the finished level are kept, with like ones
+ * added together.
  */
 void peek_mention(const char *what, const char *name, const char *carrier,
 	const char *end, int number)
@@ -1430,6 +1477,9 @@ void peek_mention(const char *what, const char *name, const char *carrier,
 		peek_mention_msg(&m);
 		return;
 	}
+
+	/* While generating, only the look over the finished level counts */
+	if (!peek_scanning) return;
 
 	/* Add to a matching earlier mention */
 	for (i = 0; i < peek_count; i++) {
@@ -1471,8 +1521,8 @@ static bool object_peek_wanted(const struct object *obj)
 /**
  * Cheat -- mention an object worth knowing about as it is placed in the
  * dungeon.  carrier is the name of the monster carrying it, or NULL if it
- * is on the floor; only artifacts say who carries them, so that other
- * objects are counted for the whole level.
+ * is on the floor; potions don't say who carries them, so that they are
+ * counted for the whole level.
  */
 void object_mention(const struct chunk *c, const struct object *obj,
 	const char *carrier)
@@ -1491,8 +1541,12 @@ void object_mention(const struct chunk *c, const struct object *obj,
 		what = "Object";
 	}
 
+	/*
+	 * Say who carries artifacts and armour, so that they aren't lost by
+	 * banishing the carrier; count potions for the whole level.
+	 */
 	object_mention_name(o_name, sizeof(o_name), obj);
-	peek_mention(what, o_name, obj->artifact ? carrier : NULL, "",
+	peek_mention(what, o_name, tval_is_potion(obj) ? NULL : carrier, "",
 		obj->number);
 }
 
